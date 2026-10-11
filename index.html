@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Selectel — где физически стоят пулы</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@420;560;700&family=Unbounded:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --paper: #dce6ef;
+    --panel: #f3f7fb;
+    --ink: #17263a;
+    --muted: #526579;
+    --line: #c3d0dc;
+    --same: #c4472a;
+    --split: #0c6d68;
+    --ghost: #6e8498;
+    --mark: #8a6420;
+    --focus: #174f8a;
+    --old: #6b4a12;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Manrope, "Segoe UI", sans-serif;
+    font-size: 16.5px;
+    line-height: 1.5;
+  }
+  button, a { font: inherit; }
+  a { color: var(--focus); }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  header, main { width: min(1440px, calc(100% - 28px)); margin: 0 auto; }
+  header { padding: 28px 0 8px; display: flex; justify-content: space-between; gap: 24px; align-items: baseline; }
+  header p { margin: 0; color: var(--muted); font-size: 14px; }
+  h1 {
+    font-family: Unbounded, Manrope, sans-serif;
+    font-weight: 500;
+    font-size: clamp(28px, 4vw, 44px);
+    line-height: 1.12;
+    letter-spacing: -0.03em;
+    margin: 0;
+    max-width: 18ch;
+  }
+  .atlas {
+    display: grid;
+    grid-template-columns: 340px minmax(0, 1fr);
+    gap: 18px;
+    align-items: stretch;
+    margin-top: 18px;
+  }
+  .zone-side {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .zone-side h2 { margin: 12px 14px 4px; }
+  #rows { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 8px 4px; }
+  #rows h3 {
+    margin: 12px 6px 2px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .zitem {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    color: inherit;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 8px 6px 9px;
+    cursor: pointer;
+  }
+  .zitem b { display: block; font-size: 15px; }
+  .zitem span { display: block; color: var(--muted); font-size: 13px; margin-top: 1px; }
+  .zitem .tag { margin-top: 5px; }
+  .zitem:hover, .zitem.active { background: #e7eef5; }
+  .zitem.static { cursor: default; }
+  .zitem.static:hover { background: transparent; }
+  .lead {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 18px;
+  }
+  .fact {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 16px 16px 14px;
+  }
+  .fact b {
+    font-family: Unbounded, Manrope, sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -0.03em;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .fact span { color: var(--muted); font-size: 14.5px; }
+  .fact.same { border-left: 6px solid var(--same); }
+  .fact.split { border-left: 6px solid var(--split); }
+  .map-wrap {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    margin-top: 0;
+    min-width: 0;
+  }
+  #map { height: 640px; background: #d5dee6; }
+  .arrow-head { background: transparent !important; border: none !important; }
+  .bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .bar button, .toggles button {
+    background: rgba(243, 247, 251, 0.94);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  .bar button[aria-pressed="true"], .toggles button[aria-pressed="true"] {
+    background: var(--ink);
+    color: #f3f7fb;
+    border-color: var(--ink);
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .legend .caveat { flex-basis: 100%; margin: 0; }
+  .zone-label {
+    background: transparent !important;
+    border: none !important;
+    color: #5c4214;
+    font: 700 12px/1.2 Manrope, sans-serif;
+    text-align: center;
+    white-space: nowrap;
+    text-shadow: 0 0 2px #fff, 0 0 3px #fff, 0 0 4px #fff;
+    pointer-events: none;
+  }
+  .sw { display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; }
+  .sw.own, .sw.alien {
+    width: 12px; height: 12px; border-radius: 50%; background: transparent;
+    border: 2px solid var(--ink); vertical-align: -2px;
+  }
+  .sw.alien { border-style: dashed; border-color: var(--ghost); }
+  .badge {
+    display: inline-block;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.01em;
+    padding: 2px 7px;
+    margin-bottom: 4px;
+  }
+  .badge.yes { background: var(--ink); color: #f3f7fb; }
+  .badge.no { color: var(--ghost); border: 1px dashed var(--ghost); }
+  .leaflet-popup.pop-ours .leaflet-popup-content-wrapper { box-shadow: inset 0 4px 0 var(--ink); }
+  .leaflet-popup.pop-alien .leaflet-popup-content-wrapper { box-shadow: inset 0 4px 0 var(--ghost); }
+  .section { margin: 28px 0; }
+  h2 {
+    font-family: Unbounded, Manrope, sans-serif;
+    font-weight: 500;
+    font-size: 22px;
+    letter-spacing: -0.03em;
+    margin: 0 0 12px;
+  }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { white-space: nowrap; }
+  th { font-weight: 560; color: var(--muted); font-size: 13px; }
+  .list-wrap { overflow-x: auto; }
+  tr.hit { cursor: pointer; }
+  tr.hit:hover td { background: #e7eef5; }
+  tr.active td { background: #e1ebf4; }
+  .tag {
+    display: inline-block;
+    padding: 1px 6px;
+    font-size: 12px;
+    border: 1px solid currentColor;
+  }
+  .tag.same { color: var(--same); }
+  .tag.split { color: var(--split); }
+  .tag.move { color: var(--focus); }
+  .tag.old { color: var(--old); }
+  .tag.ghost { color: var(--ghost); }
+  .prose { display: block; }
+  .prose p, .note p { margin: 0 0 12px; max-width: 68ch; }
+  .note { color: var(--muted); font-size: 14px; margin: 8px 12px 12px; }
+  .sources { font-size: 14px; color: var(--muted); padding-bottom: 48px; }
+  .sources li { margin: 4px 0; }
+  .leaflet-popup-content { font-family: Manrope, sans-serif; font-size: 14px; line-height: 1.4; margin: 10px 12px; }
+  .leaflet-popup-content b { font-family: Unbounded, Manrope, sans-serif; font-weight: 500; }
+  @media (max-width: 860px) {
+    .atlas, .lead { grid-template-columns: 1fr; }
+    .zone-side { height: auto; overflow: visible; }
+    #rows { overflow: visible; }
+    header { flex-direction: column; gap: 6px; }
+    #map { height: 480px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Рандеву в одном корпусе. ru-6 — три зоны.</h1>
+  <p>Пулы Selectel · разбор на 11 октября 2026<br>Координаты OSM, адреса из документации Selectel</p>
+</header>
+<main>
+  <div class="atlas">
+    <aside class="zone-side">
+      <h2>Зоны</h2>
+      <div id="rows"></div>
+      <p class="note">Пункт открывает точку на карте. ru-6a («Север Москвы», вместе с MSK-7) в кадастре Selectel без улицы: точку не ставлю, чтобы не выдумать адрес.</p>
+    </aside>
+    <div class="map-wrap">
+    <div class="bar" role="toolbar" aria-label="Город на карте">
+      <button type="button" id="view-msk" aria-pressed="true">Москва</button>
+      <button type="button" id="view-spb" aria-pressed="false">Петербург</button>
+      <button type="button" id="view-both" aria-pressed="false">Оба города</button>
+      <button type="button" id="tog-other" aria-pressed="true">Чужие площадки Selectel</button>
+      <button type="button" id="tog-ring" aria-pressed="true">Край кольца и Выборг</button>
+      <button type="button" id="tog-news" aria-pressed="true">Направления и зоны</button>
+    </div>
+    <div class="legend">
+      <div><i class="sw own"></i>кружок: наши серверы</div>
+      <div><i class="sw alien"></i>пунктир: площадка есть, наших нет</div>
+      <div><i class="sw" style="background:var(--same)"></i>кубер рандеву, Берзарина</div>
+      <div><i class="sw" style="background:var(--focus)"></i>ru-6c, Рябиновая, съезд</div>
+      <div><i class="sw" style="background:var(--split)"></i>Петербург, другой кампус</div>
+      <div><i class="sw" style="background:var(--mark)"></i>зона сводок</div>
+      <div><i class="sw" style="background:#9a3412"></i>стрелка подлёта по сводкам</div>
+      <div><i class="sw" style="background:#526579"></i>Финляндия, не эти сводки</div>
+      <p class="caveat">Стрелки — сторона подлёта по открытым сводкам, не маршрут. Круги — районы, где называли последствия, не радиус боеприпаса.</p>
+    </div>
+    <div id="map" role="region" aria-label="Карта площадок"></div>
+    </div>
+  </div>
+
+  <div class="lead">
+    <div class="fact same">
+      <b>Кубер рандеву — один корпус</b>
+      <span>ru-2a, ru-2b, ru-2c, ru-7a, ru-7b: Берзарина, 36с3, Щукино. ru-2b и ru-2c — старые серверы, вторичные: тот же пул ru-2, другие стойки, не другой адрес. ru-7a и ru-7b — другой пул, возможно другой этаж, тот же дом. До МКАД около 6 км, до Кремля 10 км.</span>
+    </div>
+    <div class="fact split">
+      <b>Петербург — два места, 34 км</b>
+      <span>ru-3a и ru-3b — одна группа «Цветочная», внутри КАД, 6 км южнее центра. ru-9a — Дубровка, лит. Б, Ленинградская область, примерно 25 км за КАД на восток. Это единственный настоящий разнос по зданиям.</span>
+    </div>
+    <div class="fact">
+      <b>Дальность до фронта Москву не выносит из зоны</b>
+      <span>До Курска ~460 км, до Белгорода ~580 км. Массовые БПЛА эту дистанцию перекрывают. Реже бьют не «потому что далеко», а потому что северо-запад внутри кольца не на южном подлёте. Ниже — не значит ноль.</span>
+    </div>
+  </div>
+
+  <section class="section prose">
+    <div>
+      <h2>Москва</h2>
+      <p>Документация Selectel кладёт ru-2, ru-7, gis-1, MSK-1 и MSK-2 в одну строку: улица Берзарина, дом 36, строение 3. Сегмент, по их же тексту, это другая стойка внутри пула, не другой район. ru-2a / ru-2b / ru-2c друг друга от стойки страхуют. От здания не страхуют.</p>
+      <p>Панель статуса делит «Берзарина-1» и «Берзарина-2». Вторая очередь в 2019 году описана как зал на верхнем этаже того же пятиэтажного корпуса, с отдельным холодом от зала этажом ниже. Позже сам Selectel говорил о трёх залах на трёх этажах, каждый со своей инженерией. Это разные домены для стойки и, возможно, для электричества зала. Для адреса, корпуса и квартала это один объект: соседние строения 36с1 и 36с2 стоят в десятках метров.</p>
+      <p>Щукино, северо-запад, около 6 км внутри МКАД (ориентир — метро «Мякинино» на кольце, 6,2 км от корпуса) и 10,4 км от Кремля. Южный пояс, где 20 сентября 2026 писали о попадании у Орехового бульвара и о повреждении объекта на Московском НПЗ в Капотне, отсюда 25–27 км, через весь город.</p>
+      <p>Переезд в ru-6 — это три зоны, запущенные 31 марта 2026, с заявленными 10–15 км между площадками и сетью короче 1 мс. ru-6b в кадастре стоит в той же строке, что ru-2 и ru-7: Берзарина, 36с3. Перенос только на ru-6b корпус не меняет. Реальный съезд — ru-6c, Рябиновая, 53, кампус DataPro в Очаково: 11 км к юго-западу, внутри МКАД, но у кольца. Это более шумная сторона, чем Щукино. ru-6a подписан «Север Москвы», улицы в кадастре нет. Юрловский сюда не клеится: ru-6 уже работал в марте 2026, а Юрловский на апрель ещё не ввели, трекеры на 7 октября по-прежнему пишут «строится».</p>
+    </div>
+    <div>
+      <h2>Что за удары</h2>
+      <p>По открытым сводкам 2025–2026 это массовые дальние беспилотники, не артиллерия с линии фронта. Большую часть сбивают над промежуточными областями. До Москвы доходит меньшая доля, и она чаще заканчивается в области и у южного и юго-восточного края города.</p>
+      <p>9–10 октября 2026 мэр говорил о 403 аппаратах в сторону Московского региона, большая часть на дальних рубежах, 25 на подлёте. 20 сентября — больше 1600, из них 450 на подлёте; последствия названы в 17 округах области, в том числе Раменское, Люберцы, Коломна, Егорьевск, Воскресенск, Котельники, Лыткарино и Истра. Истра показывает, что западный заход тоже бывает: город Истра в 40 км к западу от Берзарина, уже за МКАД. 17 мая 2026 губернатор назвал Химки, микрорайон Старбеево: попадание в частный дом, в ту же ночь — обломки в Шереметьево. Химки лежат сразу за МКАД, около 11 км к северу от Берзарина. Сам Щукино внутри кольца в этих списках не назван. Обломки перехвата могут упасть и в «тихом» секторе. Оценка «ниже», не «закрыто».</p>
+      <p>В тех же сводках фигурируют НПЗ, порты, энергетика, логистика, иногда жилые дома как попадание или обломки. Коммерческий дата-центр как тип объекта там не назван. Практический риск рандеву — общий кампус: один пожар, один ввод, одни обломки на квартал снимают ru-2a, старые ru-2b и ru-2c, ru-7 и заодно ru-6b. Разнос стоек внутри Берзарина от этого не лечит.</p>
+      <h2>Петербург и Финляндия</h2>
+      <p>ru-3a и ru-3b — пул ru-3, группа «Цветочная», зона доступности 1. Русская документация и карточка OSM указывают Цветочную, 19. Английская — Коли Томчака, 28, лит. К. Между адресами около 270 м, один квартал Московской заставы. Цветочная, 21 (лит. А) — это SPB-1, его в списке нет. Внутри КАД, 5,8 км южнее Дворцовой.</p>
+      <p>ru-9a — Дубровка-2, Советская, 1, лит. Б, Всеволожский район. Литеры А и И — соседние корпуса того же посёлка (ru-1, не ваши). До Цветочной 34 км, до центра 36 км, за КАД на восток примерно на 25 км. Другая область, другое электричество. Это и есть географический запас Петербурга.</p>
+      <p>Опубликованные последствия по Ленобласти — порты залива и Кириши, не Невский проспект. Усть-Луга от Цветочной около 118 км на запад, от Дубровки 151 км. Кириши — 106 км от Цветочной и 74 км от Дубровки, дальше на восток по Неве. Дубровка ближе к киришскому направлению и стоит вне кольца, поэтому из двух петербургских площадок она шумнее. Сама она ни портом, ни НПЗ не является.</p>
+      <p>Финляндия — другой сценарий, не продолжение этих налётов. Войны с Финляндией в этих сводках нет. Выборг лежит в 126 км к северо-западу от Цветочной и в 155 км от Дубровки, граница дальше Выборга. Обе площадки стоят на юге и на востоке города, то есть с обратной стороны от выборгского луча. Ближе к Финляндии из двух — городская Цветочная, и всё равно это больше ста километров до Выборга, не до границы.</p>
+    </div>
+  </section>
+
+  <section class="sources">
+    <h2>Откуда адреса и сводки</h2>
+    <ul>
+      <li><a href="https://docs.selectel.ru/infrastructure/locations/">Selectel, локации и кадастровые адреса</a> — ru-6b на Берзарина, ru-6c на Рябиновой, 53, ru-6a «Север Москвы» без улицы.</li>
+      <li><a href="https://selectel.ru/about/newsroom/news/selectel-zapustil-katastrofoustojchivyj-region-v-sobstvennoj-oblachnoj-platforme/">Selectel, 31 марта 2026</a> — запуск ru-6, три зоны, до 15 км между ЦОД.</li>
+      <li><a href="https://selectel.ru/about/newsroom/press/novyi-cod-selectel-v-moskve/">Selectel, 2019</a> — вторая очередь Берзарина на другом этаже того же здания.</li>
+      <li><a href="https://www.forbes.ru/society/570050-vsu-predprinali-odnu-iz-krupnejsih-za-poslednie-gody-popytok-ataki-na-moskvu">Forbes, 10 октября 2026</a> — 403 БПЛА к Московскому региону.</li>
+      <li><a href="https://www.kommersant.ru/doc/8970743">Коммерсантъ, 20 сентября 2026</a> — Ореховый бульвар, Московский НПЗ, округа области.</li>
+      <li><a href="https://ria.ru/20260517/bpla-2092929310.html">РИА Новости, 17 мая 2026</a> — Химки, микрорайон Старбеево: попадание в частный дом. В ту же ночь обломки в Шереметьево.</li>
+      <li><a href="https://www.mk-lenobl.ru/incident/2025/12/16/oblomki-bespilotnika-obnaruzhili-mezhdu-kirishami-i-budogoshhyu.html">МК Ленобласть, 16 декабря 2025</a> — обломки между Киришами и Будогощью.</li>
+      <li>Координаты: Nominatim / OpenStreetMap на 11 октября 2026. Подложка карты — Esri: сервер OpenStreetMap не отдаёт тайлы странице, открытой как файл. МКАД и КАД на подложке, не отдельным контуром. «6 км внутри МКАД» для Берзарина — расстояние до станции «Мякинино», которая стоит у кольца.</li>
+    </ul>
+  </section>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const sites = [
+  {
+    id: "berzarina",
+    city: "msk",
+    ours: true,
+    kind: "same",
+    name: "Берзарина, 36с3",
+    pools: "Кубер рандеву: ru-2a, ru-2b, ru-2c, ru-7a, ru-7b. Старые и вторичные: ru-2b, ru-2c. Здесь же ru-6b и MSK-2.",
+    lat: 55.7910503, lon: 37.4667346,
+    where: "Щукино, северо-запад. Залы на разных этажах одного корпуса. ru-2b и ru-2c — другие стойки того же пула ru-2, не другой дом.",
+    ring: "Около 6 км внутри МКАД",
+    risk: "Ниже южного пояса. Всё рандеву и ru-6b снимаются одним корпусом."
+  },
+  {
+    id: "tsvet",
+    city: "spb",
+    ours: true,
+    kind: "same",
+    name: "Цветочная, 19",
+    pools: "ru-3a, ru-3b",
+    lat: 59.8872167, lon: 30.3291251,
+    where: "Московская застава. Английская документация пишет Коли Томчака, 28 — 270 м, тот же квартал. Сегменты — стойки одного пула.",
+    ring: "Внутри КАД, 5,8 км южнее Дворцовой",
+    risk: "Тише из двух петербургских. Город, не порт и не Кириши."
+  },
+  {
+    id: "dubrovka",
+    city: "spb",
+    ours: true,
+    kind: "split",
+    name: "Дубровка, Советская, 1, лит. Б",
+    pools: "ru-9a",
+    lat: 59.8346237, lon: 30.9354027,
+    where: "Всеволожский район. Точка OSM подписана как Дубровка-3 (лит. И); лит. Б — соседний корпус того же адреса.",
+    ring: "За КАД, около 25 км на восток",
+    risk: "Выше городской площадки: ближе к киришскому направлению и вне кольца. 34 км от Цветочной."
+  },
+  {
+    id: "avia",
+    city: "msk",
+    ours: false,
+    kind: "ghost",
+    name: "Авиамоторная, 69",
+    pools: "MSK-3",
+    lat: 55.7361639, lon: 37.7211222,
+    where: "Лефортово, кампус DataPro. В вашем списке нет.",
+    ring: "Внутри МКАД, 6,7 км от Кремля, юго-восток",
+    risk: "Другое здание, 17 км от Берзарина. Сторона более шумная, чем Щукино."
+  },
+  {
+    id: "ryab",
+    city: "msk",
+    ours: true,
+    kind: "move",
+    name: "Рябиновая, 53 — ru-6c",
+    pools: "ru-6c, зона доступности 4. Кампус DataPro.",
+    lat: 55.6929473, lon: 37.4271516,
+    where: "Очаково-Матвеевское. Единственный сегмент ru-6, который уезжает с Берзарина по опубликованному адресу.",
+    ring: "Внутри МКАД, у юго-западного кольца. 11 км от Берзарина.",
+    risk: "Другой ввод. Ближе к кольцу и к западной стороне, чем Щукино."
+  }
+];
+
+const news = [
+  { id: "orekh", city: "msk", name: "Ореховый бульвар", lat: 55.6102317, lon: 37.7131053, text: "20 сентября 2026: попадание в здание на юге Москвы, у кольца." },
+  { id: "npz", city: "msk", name: "Московский НПЗ, Капотня", lat: 55.6496858, lon: 37.8091651, text: "20 сентября 2026: повреждён объект на территории завода. Юго-восток, у МКАД." },
+  { id: "ram", city: "msk", name: "Раменское", lat: 55.5709361, lon: 38.2282099, text: "20 сентября 2026: среди округов, где писали о повреждениях. Юго-восток области." },
+  { id: "lub", city: "msk", name: "Люберцы", lat: 55.6783142, lon: 37.8937700, text: "20 сентября 2026: среди округов с повреждениями. Восток, за МКАД." },
+  { id: "istra", city: "msk", name: "Истра", lat: 55.9145993, lon: 36.8595482, text: "20 сентября 2026: западный округ тоже был в сводке. 40 км к западу от Берзарина." },
+  { id: "khimki", city: "msk", name: "Химки", lat: 55.8917293, lon: 37.4396994, text: "17 мая 2026: губернатор назвал Химки, микрорайон Старбеево — попадание в частный дом. В ту же ночь писали об обломках в Шереметьево. Около 11 км к северу от Берзарина, уже за МКАД." },
+  { id: "kir", city: "spb", name: "Кириши", lat: 59.450325, lon: 32.010578, text: "НПЗ и район, куда долетают БПЛА. 16 декабря 2025: обломки между Киришами и Будогощью. 74 км от Дубровки." },
+  { id: "ust", city: "spb", name: "Усть-Луга", lat: 59.659244, lon: 28.269509, text: "Порт на заливе. В сводках 2026 года как место пожаров после БПЛА. ~118 км к западу от Цветочной." }
+];
+
+const kremlin = [55.752023, 37.617499];
+const palace = [59.9390434, 30.3153537];
+const myakinino = [55.8231196, 37.3849827];
+
+function km(a, b) {
+  const r = Math.PI / 180;
+  const dLat = (b[0] - a[0]) * r;
+  const dLon = (b[1] - a[1]) * r;
+  const la1 = a[0] * r, la2 = b[0] * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+  return 6371 * 2 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+const map = L.map("map", { scrollWheelZoom: true, zoomControl: false });
+L.control.zoom({ position: "topright" }).addTo(map);
+L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
+  attribution: "Tiles &copy; Esri",
+  maxZoom: 19
+}).addTo(map);
+
+const layers = {
+  sites: L.layerGroup().addTo(map),
+  other: L.layerGroup().addTo(map),
+  ring: L.layerGroup().addTo(map),
+  strikesMsk: L.layerGroup().addTo(map),
+  strikesSpb: L.layerGroup().addTo(map)
+};
+const markers = {};
+
+function pin(color, radius) {
+  return { radius, color, weight: 2, fillColor: color, fillOpacity: 0.95, pane: "markerPane" };
+}
+
+function ownBadge(ours) {
+  return ours
+    ? '<span class="badge yes">Наши серверы</span>'
+    : '<span class="badge no">Наших серверов нет</span>';
+}
+
+sites.forEach((s) => {
+  const color = s.kind === "split" ? "#0c6d68" : s.kind === "move" ? "#174f8a" : s.kind === "same" ? "#c4472a" : "#6e8498";
+  const at = [s.lat, s.lon];
+  const halo = L.circleMarker(at, {
+    radius: 16, color: "#f7f4ee", weight: 7, opacity: 0.95, fillOpacity: 0, pane: "markerPane"
+  });
+  const ring = L.circleMarker(at, {
+    radius: 16,
+    color: "#17263a",
+    weight: 3,
+    opacity: 1,
+    fillOpacity: 0,
+    dashArray: s.ours ? null : "5 4",
+    pane: "markerPane"
+  });
+  const dot = s.ours
+    ? L.circleMarker(at, pin(color, 7))
+    : L.circleMarker(at, { radius: 3, color: "#17263a", weight: 2, fillColor: "#f7f4ee", fillOpacity: 1, pane: "markerPane" });
+  const toCenter = s.city === "msk" ? km(at, kremlin) : km(at, palace);
+  const centerName = s.city === "msk" ? "Кремля" : "Дворцовой";
+  const html = ownBadge(s.ours) + "<br><b>" + s.name + "</b><br>" + s.pools +
+    "<br>" + s.where +
+    "<br>" + s.ring +
+    "<br>" + toCenter.toFixed(1) + " км от " + centerName +
+    "<br>" + s.risk;
+  const group = L.featureGroup([halo, ring, dot]);
+  group.bindPopup(html, { className: s.ours ? "pop-ours" : "pop-alien" });
+  group.bindTooltip(s.ours ? "Наши серверы" : "Наших серверов нет", { direction: "top", offset: [0, -8] });
+  markers[s.id] = group;
+  (s.ours ? layers.sites : layers.other).addLayer(group);
+});
+
+function bearing(a, b) {
+  const r = Math.PI / 180;
+  const p1 = a[0] * r, p2 = b[0] * r, dl = (b[1] - a[1]) * r;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function addArrow(layer, from, to, color, label, dash) {
+  L.polyline([from, to], { color: color, weight: 3, opacity: 0.9, dashArray: dash || null })
+    .bindTooltip(label, { sticky: true }).addTo(layer);
+  const deg = bearing(from, to);
+  const icon = L.divIcon({
+    className: "arrow-head",
+    html: '<svg width="18" height="18" viewBox="0 0 18 18" style="transform:rotate(' + deg + 'deg);display:block"><polygon points="9,1 17,16 9,12 1,16" fill="' + color + '"/></svg>',
+    iconSize: [18, 18],
+    iconAnchor: [9, 9]
+  });
+  L.marker(to, { icon: icon, keyboard: false }).bindTooltip(label).addTo(layer);
+}
+
+function addZone(layer, center, meters, name, label, labelAt) {
+  L.circle(center, {
+    radius: meters, color: "#8a6420", weight: 1.5, fillColor: "#8a6420", fillOpacity: 0.14
+  }).bindTooltip(label, { sticky: true }).addTo(layer);
+  const at = labelAt || center;
+  L.marker(at, {
+    icon: L.divIcon({
+      className: "zone-label",
+      html: name,
+      iconSize: [150, 16],
+      iconAnchor: [75, 8]
+    }),
+    interactive: false,
+    keyboard: false
+  }).addTo(layer);
+}
+
+addZone(layers.strikesMsk, [55.63, 37.76], 12000, "Орехово — Капотня", "Южный пояс у МКАД: Ореховый бульвар и Капотня, 20 сентября 2026. Район сводок, не радиус боеприпаса.", [55.635, 37.70]);
+addZone(layers.strikesMsk, [55.60, 38.12], 16000, "Раменское — Люберцы", "Юго-восток области: Раменское, Люберцы и соседние округа. Район сводок, не радиус боеприпаса.", [55.575, 38.30]);
+addZone(layers.strikesMsk, [55.91, 36.86], 12000, "Истра", "Истра: западный округ в сводке 20 сентября 2026. Район сводок, не радиус боеприпаса.");
+addZone(layers.strikesMsk, [55.8917293, 37.4396994], 8000, "Химки", "Химки, Старбеево: 17 мая 2026, попадание в частный дом. Район сводки, не радиус боеприпаса. Около 11 км к северу от Берзарина, за МКАД.");
+addArrow(layers.strikesMsk, [55.28, 37.55], [55.56, 37.68], "#9a3412", "Подлёт с юга. Сторона по сводкам, не маршрут.");
+addArrow(layers.strikesMsk, [55.38, 38.62], [55.60, 37.98], "#9a3412", "Юго-восток: Раменское, Люберцы, Капотня.");
+addArrow(layers.strikesMsk, [55.32, 36.82], [55.58, 37.38], "#9a3412", "Юго-запад, к стороне Рябиновой и МКАД.");
+addArrow(layers.strikesMsk, [55.93, 36.62], [55.84, 37.22], "#9a3412", "Запад реже: Истра, 20 сентября 2026.");
+addArrow(layers.strikesMsk, [56.08, 37.28], [55.97, 37.44], "#9a3412", "Север: Химки, 17 мая 2026. Сторона по сводке, не маршрут.");
+
+addZone(layers.strikesSpb, [59.450325, 32.010578], 14000, "Кириши", "Кириши: НПЗ и обломки между Киришами и Будогощью. 74 км от Дубровки.");
+addZone(layers.strikesSpb, [59.659244, 28.269509], 12000, "Усть-Луга", "Усть-Луга: порт, пожары после БПЛА в сводках 2026. Около 118 км к западу от Цветочной.");
+addArrow(layers.strikesSpb, [59.28, 30.55], [59.72, 30.40], "#9a3412", "Подлёт к Петербургу с юга. Сторона по сводкам, не маршрут.");
+addArrow(layers.strikesSpb, [59.20, 31.55], [59.40, 31.90], "#9a3412", "К Киришам, восток по Неве.");
+addArrow(layers.strikesSpb, [59.35, 28.55], [59.58, 28.35], "#9a3412", "К Усть-Луге, порт на заливе.");
+addArrow(layers.strikesSpb, [60.62, 28.85], [60.20, 29.55], "#526579", "Финляндия, северо-запад. В сводках этих налётов нет, граница дальше Выборга.", "7 6");
+
+news.forEach((n) => {
+  const m = L.circleMarker([n.lat, n.lon], { radius: 5, color: "#8a6420", weight: 1, fillColor: "#8a6420", fillOpacity: 0.9 });
+  m.bindPopup(ownBadge(false) + "<br><b>" + n.name + "</b><br>" + n.text, { className: "pop-alien" });
+  (n.city === "msk" ? layers.strikesMsk : layers.strikesSpb).addLayer(m);
+});
+
+L.circleMarker(myakinino, { radius: 5, color: "#17263a", weight: 2, fillColor: "#f3f7fb", fillOpacity: 1 })
+  .bindTooltip("Мякинино: станция у МКАД, 6,2 км от Берзарина. Серверов здесь нет.", { direction: "right" }).addTo(layers.ring);
+L.circleMarker([60.709217, 28.744051], { radius: 5, color: "#17263a", weight: 2, fillColor: "#f3f7fb", fillOpacity: 1 })
+  .bindTooltip("Выборг. Граница с Финляндией дальше на северо-запад. Серверов здесь нет.", { direction: "right" }).addTo(layers.ring);
+
+const zoneList = document.getElementById("rows");
+const tableRows = [
+  ["Кубер рандеву", "ru-2a", "Берзарина, 36с3, Щукино", "Основной сегмент пула ru-2", "≈6 км внутри МКАД, северо-запад", "Ниже южного пояса", "berzarina", "same"],
+  ["Кубер рандеву", "ru-2b, ru-2c", "Берзарина, 36с3", "Старые серверы, вторичные. Другие стойки того же пула", "там же", "Старые, тот же корпус", "berzarina", "old"],
+  ["Кубер рандеву", "ru-7a, ru-7b", "Берзарина, 36с3", "Другой пул. Зал может быть на другом этаже", "там же", "Тот же корпус", "berzarina", "same"],
+  ["Переезд ru-6", "ru-6b", "Берзарина, 36с3", "Тот же адрес, что и рандеву. Съезда нет", "там же", "Корпус не меняется", "berzarina", "same"],
+  ["Переезд ru-6", "ru-6c", "Рябиновая, 53, Очаково", "Другой кампус, DataPro, 11 км к юго-западу", "У юго-западного МКАД", "Съезд с корпуса, шумнее", "ryab", "move"],
+  ["Переезд ru-6", "ru-6a", "«Север Москвы», улица не опубликована", "Третья зона, вместе с MSK-7. Точки на карте нет", "Адрес закрыт", "Не поставлен", null, "ghost"],
+  ["Не в рандеву", "MSK-2", "Берзарина, 36с3", "Выделенные серверы, тот же дом", "там же", "Тот же корпус", "berzarina", "same"],
+  ["Петербург", "ru-3a, ru-3b", "Цветочная, 19", "Один пул, две стойки", "Внутри КАД, 6 км южнее центра", "Тише из двух", "tsvet", "same"],
+  ["Петербург", "ru-9a", "Дубровка, лит. Б", "Другое здание, 34 км от Цветочной", "≈25 км за КАД, восток", "Выше городской", "dubrovka", "split"],
+  ["Не ваш список", "MSK-3", "Авиамоторная, 69", "DataPro, Лефортово. Не ru-6", "Внутри, юго-восток", "Шумнее Щукина", "avia", "ghost"]
+];
+let lastGroup = "";
+tableRows.forEach((row) => {
+  if (row[0] !== lastGroup) {
+    lastGroup = row[0];
+    const h = document.createElement("h3");
+    h.textContent = row[0];
+    zoneList.appendChild(h);
+  }
+  const item = document.createElement(row[6] ? "button" : "div");
+  item.className = "zitem" + (row[6] ? "" : " static");
+  item.dataset.id = row[6] || "";
+  if (row[6]) item.type = "button";
+  const name = document.createElement("b");
+  name.textContent = row[1];
+  const place = document.createElement("span");
+  place.textContent = row[2] + ". " + row[3];
+  const tag = document.createElement("i");
+  tag.className = "tag " + row[7];
+  tag.textContent = row[5];
+  item.append(name, place, tag);
+  if (row[6]) item.addEventListener("click", () => focusSite(row[6]));
+  zoneList.appendChild(item);
+});
+
+function press(id, on) { document.getElementById(id).setAttribute("aria-pressed", on ? "true" : "false"); }
+
+function showCity(city) {
+  press("view-msk", city === "msk");
+  press("view-spb", city === "spb");
+  press("view-both", city === "both");
+  const pts = [];
+  sites.forEach((s) => {
+    const show = city === "both" || s.city === city;
+    const layer = s.ours ? layers.sites : layers.other;
+    const otherOn = document.getElementById("tog-other").getAttribute("aria-pressed") === "true";
+    if (show && (s.ours || otherOn)) {
+      if (!layer.hasLayer(markers[s.id])) layer.addLayer(markers[s.id]);
+      pts.push([s.lat, s.lon]);
+    } else if (layer.hasLayer(markers[s.id])) {
+      layer.removeLayer(markers[s.id]);
+    }
+  });
+  const strikesOn = document.getElementById("tog-news").getAttribute("aria-pressed") === "true";
+  if (map.hasLayer(layers.strikesMsk)) map.removeLayer(layers.strikesMsk);
+  if (map.hasLayer(layers.strikesSpb)) map.removeLayer(layers.strikesSpb);
+  if (strikesOn && (city === "msk" || city === "both")) layers.strikesMsk.addTo(map);
+  if (strikesOn && (city === "spb" || city === "both")) layers.strikesSpb.addTo(map);
+  if (city === "msk") pts.push(kremlin, myakinino, [55.28, 37.55], [55.32, 36.82], [55.38, 38.62], [55.93, 36.62], [56.08, 37.28]);
+  if (city === "spb") pts.push(palace, [60.62, 28.85], [59.20, 31.55], [59.35, 28.55], [59.450325, 32.010578], [59.659244, 28.269509]);
+  if (city === "both") pts.push([55.28, 37.55], [59.20, 31.55], [60.62, 28.85], [59.35, 28.55]);
+  if (pts.length) map.fitBounds(pts, { padding: [42, 42], maxZoom: city === "both" ? 6 : 10 });
+}
+
+function focusSite(id) {
+  const s = sites.find((x) => x.id === id);
+  showCity(s.city);
+  map.setView([s.lat, s.lon], s.city === "msk" ? 13 : 11);
+  markers[id].openPopup();
+  document.querySelectorAll("#rows .zitem").forEach((el) => el.classList.toggle("active", el.dataset.id === id));
+}
+
+document.getElementById("view-msk").onclick = () => showCity("msk");
+document.getElementById("view-spb").onclick = () => showCity("spb");
+document.getElementById("view-both").onclick = () => showCity("both");
+
+function toggleLayer(btn, layer) {
+  const on = btn.getAttribute("aria-pressed") !== "true";
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  if (on) layer.addTo(map); else map.removeLayer(layer);
+  if (btn.id === "tog-other") {
+    const city = document.getElementById("view-spb").getAttribute("aria-pressed") === "true" ? "spb"
+      : document.getElementById("view-both").getAttribute("aria-pressed") === "true" ? "both" : "msk";
+    showCity(city);
+  }
+}
+document.getElementById("tog-other").onclick = (e) => toggleLayer(e.currentTarget, layers.other);
+document.getElementById("tog-ring").onclick = (e) => toggleLayer(e.currentTarget, layers.ring);
+document.getElementById("tog-news").onclick = (e) => {
+  const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+  e.currentTarget.setAttribute("aria-pressed", on ? "true" : "false");
+  const city = document.getElementById("view-spb").getAttribute("aria-pressed") === "true" ? "spb"
+    : document.getElementById("view-both").getAttribute("aria-pressed") === "true" ? "both" : "msk";
+  showCity(city);
+};
+
+const initialCity = new URLSearchParams(location.search).get("city");
+showCity(initialCity === "spb" || initialCity === "both" ? initialCity : "msk");
+</script>
+</body>
+</html>
